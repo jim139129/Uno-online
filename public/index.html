@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>UNO Online</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header>
+        <h1>UNO Online</h1>
+        <div id="onlineCount">在线人数：0</div>
+      </header>
+
+      <section id="auth" class="card">
+        <h2>进入大厅</h2>
+        <input id="nameInput" placeholder="输入昵称" maxlength="16" />
+        <button id="enterBtn">进入</button>
+      </section>
+
+      <section id="lobby" class="card hidden">
+        <h2>大厅</h2>
+        <div class="row">
+          <input id="roomName" placeholder="房间名称" />
+          <input id="maxPlayers" type="number" min="2" max="8" value="4" />
+        </div>
+        <div class="row checks">
+          <label><input type="checkbox" id="allowStackDraw" checked /> +2/+4可叠加</label>
+          <label><input type="checkbox" id="allowSameColorAll" /> 启用同色全出</label>
+          <label><input type="checkbox" id="allowSnatch" checked /> 启用抢出</label>
+        </div>
+        <button id="createRoomBtn">创建房间</button>
+        <h3>房间列表</h3>
+        <div id="roomList"></div>
+      </section>
+
+      <section id="room" class="card hidden"></section>
+      <div id="toast"></div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/app.js"></script>
+  </body>
+</html>
