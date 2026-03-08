@@ -45,6 +45,27 @@ function createCardButton(card, disabled = false) {
     </button>`;
 }
 
+function showColorPicker(onPick) {
+  const mask = document.createElement('div');
+  mask.className = 'color-picker-mask';
+  mask.innerHTML = `
+    <div class="color-picker-dialog">
+      <h3>选择颜色</h3>
+      <div class="color-picker-grid">
+        ${COLORS.map((c) => `<button class="pick-color-btn ${c}" data-color="${c}">${c}</button>`).join('')}
+      </div>
+    </div>
+  `;
+  document.body.appendChild(mask);
+  mask.querySelectorAll('[data-color]').forEach((btn) => {
+    btn.onclick = () => {
+      const picked = btn.dataset.color;
+      mask.remove();
+      onPick(picked);
+    };
+  });
+}
+
 function renderLobby(data) {
   document.getElementById('onlineCount').textContent = `在线人数：${data.onlineCount}`;
   const list = document.getElementById('roomList');
@@ -104,6 +125,13 @@ function renderRoom(s) {
   const me = s.me || { hand: [], isMyTurn: false };
   const currentName = s.players.find((p) => p.id === s.currentPlayerId)?.name || '-';
 
+  const handHtml = me.hand
+    .map((c) => {
+      const disableWild4 = !me.isMyTurn && c.type === 'wild4';
+      return createCardButton(c, disableWild4);
+    })
+    .join('');
+
   room.innerHTML = `
     <h2>房间：${s.name}</h2>
     <div class="meta-chip">规则：叠加${s.settings.allowStackDraw ? '开' : '关'} · 同色全出${s.settings.allowSameColorAll ? '开' : '关'} · 抢出${s.settings.allowSnatch ? '开' : '关'} · 最大${s.settings.maxPlayers}人</div>
@@ -138,6 +166,7 @@ function renderRoom(s) {
           ${isHost ? `<button id="toggleLock">${s.locked ? '解锁房间' : '锁定房间'}</button>` : ''}
           ${me.hand.length === 1 ? '<button id="unoBtn">喊 UNO</button>' : ''}
           ${s.gameOver ? '<button id="rematchBtn">再来一局</button>' : ''}
+          ${s.canChallengeWild4 ? '<button id="challengeWild4Btn">质疑 +4</button>' : ''}
           ${me.isMyTurn && !s.gameOver ? '<button id="drawBtn">抽牌 / 结算罚抽</button>' : ''}
           <button id="backLobby">返回大厅</button>
         </div>
@@ -147,7 +176,7 @@ function renderRoom(s) {
           .join('')}</ol>` : ''}
 
         <h3>你的手牌</h3>
-        <div class="hand">${me.hand.map((c) => createCardButton(c)).join('')}</div>
+        <div class="hand">${handHtml}</div>
         ${s.settings.allowSnatch && !me.isMyTurn && !s.gameOver ? '<div class="player-meta">提示：非你回合时，可点击“与场上完全相同”的牌抢出。</div>' : ''}
       </section>
     </div>
@@ -166,19 +195,31 @@ function renderRoom(s) {
     b.onclick = () => {
       const card = me.hand.find((x) => x.id === b.dataset.play);
       if (!card) return;
-      let chosenColor = null;
+
+      if (!me.isMyTurn && card.type === 'wild4') {
+        toast('+4 只能在自己的回合打出。');
+        return;
+      }
+
+      const emitPlay = (chosenColor = null) => {
+        if (me.isMyTurn) {
+          socket.emit('game:play', { cardId: card.id, chosenColor });
+        } else if (s.settings.allowSnatch) {
+          socket.emit('game:snatch', { cardId: card.id, chosenColor });
+        }
+      };
+
       if (card.type === 'wild' || card.type === 'wild4') {
-        chosenColor = prompt('选择颜色: red/green/blue/yellow', 'red');
+        showColorPicker((pickedColor) => emitPlay(pickedColor));
+        return;
       }
-      if (me.isMyTurn) {
-        socket.emit('game:play', { cardId: card.id, chosenColor });
-      } else if (s.settings.allowSnatch) {
-        socket.emit('game:snatch', { cardId: card.id, chosenColor });
-      }
+
+      emitPlay();
     };
   });
 
   document.getElementById('drawBtn')?.addEventListener('click', () => socket.emit('game:draw'));
+  document.getElementById('challengeWild4Btn')?.addEventListener('click', () => socket.emit('game:challengeWild4'));
   document.getElementById('startGame')?.addEventListener('click', () => socket.emit('game:start'));
   document.getElementById('unoBtn')?.addEventListener('click', () => socket.emit('game:uno'));
   document.getElementById('rematchBtn')?.addEventListener('click', () => socket.emit('game:rematchVote'));

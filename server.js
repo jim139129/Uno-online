@@ -69,6 +69,10 @@ function canPlay(card, top, chosenColor, room, player) {
 
 function sanitizeRoom(room, playerId) {
   const me = room.players.find((p) => p.id === playerId);
+  const canChallengeWild4 =
+    room.state.wild4Challenge &&
+    room.state.wild4Challenge.targetId === playerId &&
+    room.players[room.state.currentIndex]?.id === playerId;
   return {
     id: room.id,
     name: room.name,
@@ -100,6 +104,7 @@ function sanitizeRoom(room, playerId) {
     currentPlayerId: room.gameStarted ? room.players[room.state.currentIndex]?.id : null,
     pendingDraw: room.state.pendingDraw,
     pendingType: room.state.pendingType,
+    canChallengeWild4,
     finishedOrder: room.state.finishedOrder,
     ranking: room.state.ranking,
     canReportUnoTargets: room.players
@@ -175,6 +180,15 @@ function endGame(room, winnerId) {
 }
 
 function applyCard(room, player, card, chosenColor) {
+  const topBeforePlay = room.state.discard[room.state.discard.length - 1];
+  const activeColorBeforePlay = topBeforePlay?.type?.startsWith('wild')
+    ? room.state.chosenColor
+    : topBeforePlay?.color;
+  const hadMatchingColorBeforeWild4 =
+    card.type === 'wild4' &&
+    player.hand.some((c) => c.color === activeColorBeforePlay && c.type !== 'wild4');
+
+  room.state.wild4Challenge = null;
   room.state.discard.push(card);
   room.state.chosenColor = card.type.startsWith('wild') ? chosenColor : card.color;
 
@@ -184,6 +198,11 @@ function applyCard(room, player, card, chosenColor) {
   } else if (card.type === 'wild4') {
     room.state.pendingDraw += 4;
     room.state.pendingType = 'wild4';
+    room.state.wild4Challenge = {
+      sourcePlayerId: player.id,
+      targetId: room.players[(room.players.findIndex((p) => p.id === player.id) + getStep(room, 1)) % room.players.length]?.id,
+      wasIllegal: hadMatchingColorBeforeWild4
+    };
   }
 
   if (card.type === 'reverse') {
@@ -223,6 +242,7 @@ function startGame(room) {
     chosenColor: null,
     pendingDraw: 0,
     pendingType: null,
+    wild4Challenge: null,
     gameOver: false,
     finishedOrder: [],
     finishedIds: [],
@@ -270,6 +290,7 @@ function createRoom(name, hostPlayer, settings) {
       chosenColor: null,
       pendingDraw: 0,
       pendingType: null,
+      wild4Challenge: null,
       gameOver: false,
       finishedOrder: [],
       finishedIds: [],
@@ -422,6 +443,7 @@ io.on('connection', (socket) => {
       drawCards(room, player, room.state.pendingDraw);
       room.state.pendingDraw = 0;
       room.state.pendingType = null;
+      room.state.wild4Challenge = null;
       advanceTurn(room, 1, player.id);
     } else {
       drawCards(room, player, 1);
@@ -438,12 +460,42 @@ io.on('connection', (socket) => {
     if (!player) return;
     const card = player.hand.find((c) => c.id === cardId);
     const top = room.state.discard[room.state.discard.length - 1];
-    if (!card || !top || !cardEq(card, top)) return;
+    if (!card || !top || !cardEq(card, top) || card.type === 'wild4') return;
     if ((card.type === 'wild' || card.type === 'wild4') && !COLORS.includes(chosenColor)) return;
 
     player.hand = player.hand.filter((c) => c.id !== card.id);
     if (player.hand.length !== 1) player.unoDeclared = false;
     applyCard(room, player, card, chosenColor);
+    emitRoom(room);
+  });
+
+  socket.on('game:challengeWild4', () => {
+    const info = socketToPlayer.get(socket.id);
+    const room = rooms.get(info?.roomId);
+    if (!room || !room.gameStarted || room.state.gameOver) return;
+
+    const challenge = room.state.wild4Challenge;
+    if (!challenge || challenge.targetId !== info.playerId) return;
+    if (room.players[room.state.currentIndex]?.id !== info.playerId) return;
+
+    const source = room.players.find((p) => p.id === challenge.sourcePlayerId);
+    const challenger = room.players.find((p) => p.id === challenge.targetId);
+    if (!source || !challenger) return;
+
+    if (challenge.wasIllegal) {
+      drawCards(room, source, 4);
+      room.state.pendingDraw = 0;
+      room.state.pendingType = null;
+      io.to(room.id).emit('toast', { type: 'warn', message: `${challenger.name} 质疑成功，${source.name} 罚抽4张！` });
+    } else {
+      drawCards(room, challenger, 6);
+      room.state.pendingDraw = 0;
+      room.state.pendingType = null;
+      advanceTurn(room, 1, challenger.id);
+      io.to(room.id).emit('toast', { type: 'warn', message: `${challenger.name} 质疑失败，罚抽6张并跳过回合。` });
+    }
+
+    room.state.wild4Challenge = null;
     emitRoom(room);
   });
 
